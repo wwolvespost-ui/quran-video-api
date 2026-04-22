@@ -53,13 +53,12 @@ writer.on("error",reject);
 audioFiles.push(path);
 }
 
-// 🔥 كتابة قائمة الدمج
+// 🔥 دمج الصوت
 let mergedAudio = "uploads/final_audio.mp3";
 
 let concatList = audioFiles.map(f=>`file '${f}'`).join("\n");
 fs.writeFileSync("uploads/list.txt", concatList);
 
-// 🔥 مهم جدًا: إعادة ترميز الصوت
 await new Promise((resolve,reject)=>{
 exec(`ffmpeg -f concat -safe 0 -i uploads/list.txt -c:a libmp3lame -q:a 2 "${mergedAudio}"`,err=>{
 if(err){
@@ -69,9 +68,9 @@ reject(err);
 });
 });
 
-// 🔥 دمج الصوت مع الفيديو
+// 🔥 🔥 أهم تعديل هنا (تحويل حقيقي لـ mp4)
 await new Promise((resolve,reject)=>{
-exec(`ffmpeg -i "${videoPath}" -i "${mergedAudio}" -c:v libx264 -c:a aac -shortest "${output}"`,err=>{
+exec(`ffmpeg -i "${videoPath}" -i "${mergedAudio}" -c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${output}"`,err=>{
 if(err){
 console.log("final merge error:",err);
 reject(err);
