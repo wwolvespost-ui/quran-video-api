@@ -2,8 +2,12 @@ const express = require("express");
 const multer = require("multer");
 const { exec } = require("child_process");
 const fs = require("fs");
+const cors = require("cors"); // 🔥 مهم
 
 const app = express();
+
+// 🔥 حل مشكلة CORS
+app.use(cors());
 
 // تخزين الملفات
 const upload = multer({ dest: "uploads/" });
