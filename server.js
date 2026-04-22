@@ -9,127 +9,67 @@ const upload = multer({ dest: "uploads/" });
 
 app.use(express.json());
 
-// 🔥 CORS
-app.use((req,res,next)=>{
-res.setHeader("Access-Control-Allow-Origin","*");
-res.setHeader("Access-Control-Allow-Headers","*");
-next();
+// ✅ CORS
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "*");
+  next();
 });
 
-app.get("/", (req,res)=>{
-res.send("API is running 🚀");
+app.get("/", (req, res) => {
+  res.send("API is running 🚀");
 });
 
-app.post("/convert", upload.single("video"), async (req,res)=>{
+app.post("/convert", upload.single("video"), async (req, res) => {
+  console.log("🔥 request received");
 
-if(!req.file){
-return res.status(400).send("No video uploaded");
-}
+  if (!req.file) {
+    console.log("❌ no video uploaded");
+    return res.status(400).send("no video");
+  }
 
-const videoPath = req.file.path;
-const output = videoPath + ".mp4";
+  const videoPath = req.file.path;
+  const output = videoPath + ".mp4";
 
-const audioUrls = JSON.parse(req.body.audioUrls || "[]");
+  console.log("📁 video:", videoPath);
 
-try{
+  try {
+    // ✅ تحويل مباشر بدون دمج صوت (عشان نتأكد الفيديو شغال)
+    await new Promise((resolve, reject) => {
+      exec(
+        `ffmpeg -i "${videoPath}" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -movflags +faststart "${output}"`,
+        (err, stdout, stderr) => {
+          console.log("ffmpeg log:", stderr);
 
-let mergedAudio = null;
+          if (err) {
+            console.log("❌ ffmpeg error:", err);
+            reject(err);
+          } else {
+            console.log("✅ video converted");
+            resolve();
+          }
+        }
+      );
+    });
 
-// ================= تحميل ودمج الصوت =================
-if(audioUrls.length > 0){
+    // ✅ رجع الفيديو
+    res.download(output, "quran-video.mp4", () => {
+      console.log("📥 downloaded");
 
-let audioFiles = [];
+      // تنظيف
+      try {
+        fs.unlinkSync(videoPath);
+        fs.unlinkSync(output);
+      } catch (e) {
+        console.log("cleanup error:", e);
+      }
+    });
 
-for(let i=0;i<audioUrls.length;i++){
-const url = audioUrls[i];
-const path = `uploads/audio_${i}.mp3`;
-
-const response = await axios({
-url,
-method:"GET",
-responseType:"stream"
-});
-
-const writer = fs.createWriteStream(path);
-response.data.pipe(writer);
-
-await new Promise((resolve,reject)=>{
-writer.on("finish",resolve);
-writer.on("error",reject);
-});
-
-audioFiles.push(path);
-}
-
-mergedAudio = "uploads/final_audio.mp3";
-
-let concatList = audioFiles.map(f=>`file '${f}'`).join("\n");
-fs.writeFileSync("uploads/list.txt", concatList);
-
-await new Promise((resolve,reject)=>{
-exec(`ffmpeg -f concat -safe 0 -i uploads/list.txt -c:a libmp3lame -q:a 2 "${mergedAudio}"`,
-(err, stdout, stderr)=>{
-
-console.log("MERGE AUDIO LOG:", stderr);
-
-if(err){
-reject(err);
-}else resolve();
-});
-});
-
-}
-
-// ================= دمج الفيديو =================
-
-let ffmpegCmd;
-
-if(mergedAudio){
-ffmpegCmd = `ffmpeg -i "${videoPath}" -i "${mergedAudio}" -c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -shortest "${output}"`;
-}else{
-// 🔥 لو مفيش صوت
-ffmpegCmd = `ffmpeg -i "${videoPath}" -c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p "${output}"`;
-}
-
-await new Promise((resolve,reject)=>{
-exec(ffmpegCmd,(err, stdout, stderr)=>{
-
-console.log("FINAL FFMPEG LOG:", stderr);
-
-if(err){
-reject(err);
-}else resolve();
-});
-});
-
-// ================= إرسال الفيديو =================
-
-res.download(output,"quran-video.mp4",()=>{
-
-try{
-fs.unlinkSync(videoPath);
-fs.unlinkSync(output);
-
-if(fs.existsSync("uploads/final_audio.mp3")){
-fs.unlinkSync("uploads/final_audio.mp3");
-}
-
-if(fs.existsSync("uploads/list.txt")){
-fs.unlinkSync("uploads/list.txt");
-}
-
-}catch(e){
-console.log("cleanup error:",e);
-}
-
-});
-
-}catch(e){
-console.log("FULL ERROR:", e);
-res.status(500).send(e.toString());
-}
-
+  } catch (e) {
+    console.log("❌ SERVER ERROR:", e);
+    res.status(500).send("error");
+  }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, ()=>console.log("Server running"));
+app.listen(PORT, () => console.log("Server running"));
