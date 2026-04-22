@@ -9,67 +9,102 @@ const upload = multer({ dest: "uploads/" });
 
 app.use(express.json());
 
-// ✅ CORS
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "*");
-  next();
+app.use((req,res,next)=>{
+res.setHeader("Access-Control-Allow-Origin","*");
+res.setHeader("Access-Control-Allow-Headers","*");
+next();
 });
 
-app.get("/", (req, res) => {
-  res.send("API is running 🚀");
+app.get("/", (req,res)=>{
+res.send("API is running 🚀");
 });
 
-app.post("/convert", upload.single("video"), async (req, res) => {
-  console.log("🔥 request received");
+app.post("/convert", upload.single("video"), async (req,res)=>{
 
-  if (!req.file) {
-    console.log("❌ no video uploaded");
-    return res.status(400).send("no video");
-  }
+console.log("🔥 request received");
 
-  const videoPath = req.file.path;
-  const output = videoPath + ".mp4";
+const videoPath = req.file.path;
+const output = videoPath + ".mp4";
 
-  console.log("📁 video:", videoPath);
+const audioUrls = JSON.parse(req.body.audioUrls || "[]");
 
-  try {
-    // ✅ تحويل مباشر بدون دمج صوت (عشان نتأكد الفيديو شغال)
-    await new Promise((resolve, reject) => {
-      exec(
-        `ffmpeg -i "${videoPath}" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -movflags +faststart "${output}"`,
-        (err, stdout, stderr) => {
-          console.log("ffmpeg log:", stderr);
+try{
 
-          if (err) {
-            console.log("❌ ffmpeg error:", err);
-            reject(err);
-          } else {
-            console.log("✅ video converted");
-            resolve();
-          }
-        }
-      );
-    });
+let audioFiles = [];
 
-    // ✅ رجع الفيديو
-    res.download(output, "quran-video.mp4", () => {
-      console.log("📥 downloaded");
+/* ================= تحميل الصوت ================= */
+for(let i=0;i<audioUrls.length;i++){
+const url = audioUrls[i];
+const path = `uploads/audio_${i}.mp3`;
 
-      // تنظيف
-      try {
-        fs.unlinkSync(videoPath);
-        fs.unlinkSync(output);
-      } catch (e) {
-        console.log("cleanup error:", e);
-      }
-    });
+const response = await axios({
+url,
+method:"GET",
+responseType:"stream"
+});
 
-  } catch (e) {
-    console.log("❌ SERVER ERROR:", e);
-    res.status(500).send("error");
-  }
+const writer = fs.createWriteStream(path);
+response.data.pipe(writer);
+
+await new Promise((resolve,reject)=>{
+writer.on("finish",resolve);
+writer.on("error",reject);
+});
+
+audioFiles.push(path);
+}
+
+/* ================= دمج الصوت (FIX هنا) ================= */
+let mergedAudio = "uploads/final_audio.mp3";
+
+let concatList = audioFiles.map(f=>`file '${f}'`).join("\n");
+fs.writeFileSync("uploads/list.txt", concatList);
+
+// 🔥 إعادة ترميز الصوت بالكامل (مهم جدًا)
+await new Promise((resolve,reject)=>{
+exec(`ffmpeg -f concat -safe 0 -i uploads/list.txt -vn -acodec libmp3lame -ar 44100 -ac 2 -b:a 192k ${mergedAudio}`,err=>{
+if(err){
+console.log("merge audio error:",err);
+reject(err);
+}else resolve();
+});
+});
+
+/* ================= دمج الفيديو + الصوت ================= */
+await new Promise((resolve,reject)=>{
+exec(`ffmpeg -i "${videoPath}" -i "${mergedAudio}" -map 0:v:0 -map 1:a:0 -c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest "${output}"`,err=>{
+if(err){
+console.log("final merge error:",err);
+reject(err);
+}else resolve();
+});
+});
+
+/* ================= إرسال الفيديو ================= */
+res.download(output,"quran-video.mp4",()=>{
+
+try{
+fs.unlinkSync(videoPath);
+fs.unlinkSync(output);
+fs.unlinkSync(mergedAudio);
+fs.unlinkSync("uploads/list.txt");
+
+audioFiles.forEach(f=>{
+if(fs.existsSync(f)) fs.unlinkSync(f);
+});
+
+}catch(e){
+console.log("cleanup error:",e);
+}
+
+});
+
+}catch(e){
+console.log("❌ ERROR:",e);
+res.status(500).send("error");
+}
+
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server running"));
+app.listen(PORT, ()=>console.log("Server running"));
