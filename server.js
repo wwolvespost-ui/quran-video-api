@@ -2,66 +2,83 @@ const express = require("express");
 const multer = require("multer");
 const { exec } = require("child_process");
 const fs = require("fs");
-const cors = require("cors");
+const axios = require("axios");
 
 const app = express();
-
-// 🔥 حل مشكلة CORS (مهم لموقعك على Netlify)
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST"],
-}));
-
-// 📁 تخزين الملفات المؤقتة
 const upload = multer({ dest: "uploads/" });
 
-// ✅ Route للتأكد إن السيرفر شغال
-app.get("/", (req, res) => {
-  res.send("API is running 🚀");
+app.use(express.json());
+
+// 🔥 CORS حل المشكلة
+app.use((req,res,next)=>{
+res.setHeader("Access-Control-Allow-Origin","*");
+res.setHeader("Access-Control-Allow-Headers","*");
+next();
 });
 
-// 🎬 تحويل الفيديو
-app.post("/convert", upload.single("video"), (req, res) => {
+app.get("/", (req,res)=>{
+res.send("API is running 🚀");
+});
 
-  if (!req.file) {
-    return res.status(400).send("No file uploaded");
-  }
+app.post("/convert", upload.single("video"), async (req,res)=>{
 
-  const input = req.file.path;
-  const output = input + ".mp4";
+const videoPath = req.file.path;
+const output = videoPath + ".mp4";
 
-  // 🔥 ffmpeg تحويل
-  exec(`ffmpeg -y -i "${input}" -c:v libx264 -preset ultrafast -c:a aac "${output}"`, (err) => {
+const audioUrls = JSON.parse(req.body.audioUrls || "[]");
 
-    if (err) {
-      console.error("FFmpeg error:", err);
-      return res.status(500).send("Conversion error");
-    }
+try{
 
-    // 📥 تحميل الملف
-    res.download(output, "quran-video.mp4", (err) => {
+// 🔥 تحميل كل الصوت ودمجه
+let audioFiles = [];
 
-      if (err) {
-        console.error("Download error:", err);
-      }
+for(let i=0;i<audioUrls.length;i++){
+const url = audioUrls[i];
+const path = `uploads/audio_${i}.mp3`;
 
-      // 🧹 حذف الملفات المؤقتة
-      try {
-        fs.unlinkSync(input);
-        fs.unlinkSync(output);
-      } catch (e) {
-        console.log("Cleanup error:", e);
-      }
+const response = await axios({
+url,
+method:"GET",
+responseType:"stream"
+});
 
-    });
+const writer = fs.createWriteStream(path);
+response.data.pipe(writer);
 
-  });
+await new Promise(resolve=>writer.on("finish",resolve));
+
+audioFiles.push(path);
+}
+
+// 🔥 دمج كل الصوت
+let mergedAudio = "uploads/final_audio.mp3";
+
+let concatList = audioFiles.map(f=>`file '${f}'`).join("\n");
+fs.writeFileSync("uploads/list.txt", concatList);
+
+await new Promise((resolve,reject)=>{
+exec(`ffmpeg -f concat -safe 0 -i uploads/list.txt -c copy ${mergedAudio}`,err=>{
+if(err) reject(err);
+else resolve();
+});
+});
+
+// 🔥 دمج الصوت مع الفيديو
+await new Promise((resolve,reject)=>{
+exec(`ffmpeg -i ${videoPath} -i ${mergedAudio} -c:v copy -c:a aac -shortest ${output}`,err=>{
+if(err) reject(err);
+else resolve();
+});
+});
+
+res.download(output,"quran-video.mp4");
+
+}catch(e){
+console.log(e);
+res.status(500).send("error");
+}
 
 });
 
-// 🚀 تشغيل السيرفر
 const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
-});
+app.listen(PORT, ()=>console.log("Server running"));
